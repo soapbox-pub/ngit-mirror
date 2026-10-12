@@ -58,7 +58,15 @@ These are read from the environment:
 
 ## Deploying
 
-`ngit-mirror.service` is a systemd unit that expects the binary at
-`/usr/local/bin/ngit-mirror`, config at `/etc/ngit-mirror/config.toml`, and
-credentials in `/etc/ngit-mirror/env`. The cache lives in
-`/var/lib/ngit-mirror`; it can be deleted at any time and will be refetched.
+`ngit-mirror.service` is a systemd unit that expects these paths:
+
+- the binary at `/usr/local/bin/ngit-mirror`
+- config at `/etc/ngit-mirror/config.toml`
+- environment (`GITHUB_APP_ID` or `GITHUB_TOKEN`) in `/etc/ngit-mirror/env`
+- a GitHub App private key, if used, at
+  `/etc/credstore/ngit-mirror-github-app.pem` (mode 600). The service runs as
+  a systemd `DynamicUser`, so it gets the key as a credential rather than
+  reading it from disk; leave `GITHUB_APP_PRIVATE_KEY_PATH` unset.
+
+The cache lives in `/var/lib/ngit-mirror`. It can be deleted at any time and
+will be refetched.

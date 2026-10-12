@@ -6,6 +6,10 @@ After=network-online.target
 [Service]
 ExecStart=/usr/local/bin/ngit-mirror --config /etc/ngit-mirror/config.toml
 EnvironmentFile=/etc/ngit-mirror/env
+# The app key lives root-only in /etc/credstore; systemd hands the service a
+# private copy. Missing is fine when GITHUB_TOKEN is used instead.
+ImportCredential=ngit-mirror-github-app.pem
+Environment=GITHUB_APP_PRIVATE_KEY_PATH=%d/ngit-mirror-github-app.pem
 DynamicUser=yes
 StateDirectory=ngit-mirror
 Restart=always
