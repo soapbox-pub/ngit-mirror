@@ -14,6 +14,8 @@ pub struct Target {
     pub id: String,
     pub description: Option<String>,
     pub web: Option<String>,
+    /// First relay in the owner's announcement, for gitworkshop links.
+    pub relay: Option<String>,
     pub clone_urls: Vec<String>,
     pub state: Option<State>,
 }
@@ -148,6 +150,9 @@ impl Store {
                 .map(String::from),
             web: owner_ann
                 .and_then(|e| tag_values(e, "web").next())
+                .map(String::from),
+            relay: owner_ann
+                .and_then(|e| tag_values(e, "relays").next())
                 .map(String::from),
             clone_urls,
             state,

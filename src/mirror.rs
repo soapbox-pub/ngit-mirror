@@ -87,7 +87,7 @@ impl Mirror {
             if self.dry_run {
                 info!("would create {}/{name}", self.gh.org);
             } else {
-                let homepage = target.web.clone().or_else(|| self.gitworkshop_url(name));
+                let homepage = target.web.clone().or_else(|| self.gitworkshop_url(target));
                 repo = Some(
                     self.gh
                         .create_repo(name, target.description.as_deref(), homepage.as_deref())
@@ -140,9 +140,17 @@ impl Mirror {
         Ok(())
     }
 
-    fn gitworkshop_url(&self, id: &str) -> Option<String> {
+    fn gitworkshop_url(&self, target: &Target) -> Option<String> {
         let npub = self.owner.to_bech32().ok()?;
-        Some(format!("https://gitworkshop.dev/{npub}/{id}"))
+        let relay = target.relay.as_deref()?;
+        let host = relay
+            .trim_start_matches("wss://")
+            .trim_start_matches("ws://")
+            .trim_end_matches('/');
+        Some(format!(
+            "https://gitworkshop.dev/{npub}/{host}/{}",
+            target.id
+        ))
     }
 
     /// Object ids from `oids` that are not in the local repo.
