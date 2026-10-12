@@ -1,0 +1,24 @@
+# Whose repo announcements to mirror (npub or hex). This is soapbox.pub.
+owner = "npub10qdp2fc9ta6vraczxrcs8prqnv69fru2k6s2dj48gqjcylulmtjsg9arpj"
+
+# GitHub organization the mirrors are created under, named after each repo's
+# NIP-34 identifier.
+org = "soapbox-pub"
+
+# Bare repos used as the object cache. Safe to delete; it is rebuilt on demand.
+data_dir = "/var/lib/ngit-mirror"
+
+# Bootstrap relays. Relays listed in the announcements are added automatically.
+# relays = ["wss://relay.ngit.dev", "wss://git.shakespeare.diy", "wss://relay.ditto.pub", "wss://relay.damus.io"]
+
+# Delete GitHub branches and tags that are not in the nostr state.
+prune = false
+
+# Repo identifiers to leave alone.
+ignore = []
+
+# Full re-fetch and re-sync of everything, as a safety net for missed events.
+reconcile_interval_secs = 3600
+
+# Maximum number of repos syncing at once.
+concurrency = 4

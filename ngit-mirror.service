@@ -1,0 +1,19 @@
+[Unit]
+Description=Mirror ngit repositories to GitHub
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/ngit-mirror --config /etc/ngit-mirror/config.toml
+EnvironmentFile=/etc/ngit-mirror/env
+DynamicUser=yes
+StateDirectory=ngit-mirror
+Restart=always
+RestartSec=10
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target
