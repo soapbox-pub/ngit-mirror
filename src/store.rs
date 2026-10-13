@@ -1,17 +1,21 @@
-//! In-memory view of NIP-34 repo announcements (30617) and repo states (30618),
-//! and the logic that turns them into what a GitHub mirror should look like.
+//! In-memory view of NIP-34 repo announcements (30617), repo states (30618)
+//! and the owner's deletion requests (5), and the logic that turns them into
+//! what a GitHub mirror should look like.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
 use nostr_sdk::prelude::*;
 
 pub const ANNOUNCEMENT: Kind = Kind::GitRepoAnnouncement;
 pub const STATE: Kind = Kind::RepoState;
+pub const DELETION: Kind = Kind::EventDeletion;
 
 /// Everything a worker needs to bring one GitHub repo up to date.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Target {
     pub id: String,
+    /// The owner deleted the announcement, so the GitHub repo should go too.
+    pub deleted: bool,
     pub description: Option<String>,
     pub web: Option<String>,
     /// First relay in the owner's announcement, for gitworkshop links.
@@ -34,6 +38,10 @@ pub struct Store {
     owner: PublicKey,
     announcements: HashMap<(PublicKey, String), Event>,
     states: HashMap<(PublicKey, String), Event>,
+    /// Latest deletion request time for each of the owner's repo ids.
+    deletions: HashMap<String, Timestamp>,
+    /// Event ids the owner asked to delete by `e` tag.
+    deleted_events: HashSet<EventId>,
 }
 
 impl Store {
@@ -42,29 +50,116 @@ impl Store {
             owner,
             announcements: HashMap::new(),
             states: HashMap::new(),
+            deletions: HashMap::new(),
+            deleted_events: HashSet::new(),
         }
     }
 
     /// Keeps the event if it is newer than what we have for its author and
-    /// identifier, and returns that identifier.
-    pub fn insert(&mut self, event: Event) -> Option<String> {
+    /// identifier, or applies it if it is a deletion request, and returns the
+    /// repo identifiers it may have changed.
+    pub fn insert(&mut self, event: Event) -> Vec<String> {
+        if event.kind == DELETION {
+            return self.delete(&event);
+        }
+        if event.kind == ANNOUNCEMENT && self.is_deleted(&event) {
+            self.mark_deleted(&event);
+            return Vec::new();
+        }
         let map = if event.kind == ANNOUNCEMENT {
             &mut self.announcements
         } else if event.kind == STATE {
             &mut self.states
         } else {
-            return None;
+            return Vec::new();
         };
-        let id = event.tags.identifier()?;
+        let Some(id) = event.tags.identifier() else {
+            return Vec::new();
+        };
         let key = (event.pubkey, id.clone());
         if map
             .get(&key)
             .is_some_and(|old| old.created_at >= event.created_at)
         {
-            return None;
+            return Vec::new();
         }
         map.insert(key, event);
-        Some(id)
+        vec![id]
+    }
+
+    /// Applies one of the owner's deletion requests (NIP-09) to their repo
+    /// announcements. Deletion requests from anyone else are ignored.
+    fn delete(&mut self, event: &Event) -> Vec<String> {
+        if event.pubkey != self.owner {
+            return Vec::new();
+        }
+        let prefix = format!("{}:{}:", ANNOUNCEMENT.as_u16(), self.owner.to_hex());
+        let mut ids = Vec::new();
+        for tag in event.tags.iter() {
+            match tag.as_slice() {
+                [name, value, ..] if name == "a" => {
+                    if let Some(id) = value.strip_prefix(&prefix) {
+                        self.mark_deleted_at(id, event.created_at);
+                        ids.push(id.to_string());
+                    }
+                }
+                [name, value, ..] if name == "e" => {
+                    if let Ok(id) = EventId::from_hex(value) {
+                        self.deleted_events.insert(id);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let gone: Vec<_> = self
+            .announcements
+            .iter()
+            .filter(|(_, e)| self.is_deleted(e))
+            .map(|(key, _)| key.clone())
+            .collect();
+        for key in gone {
+            if let Some(event) = self.announcements.remove(&key) {
+                self.mark_deleted(&event);
+            }
+            ids.push(key.1);
+        }
+        ids
+    }
+
+    /// Records a deleted announcement under its identifier, so that one
+    /// deleted only by event id still takes its GitHub repo with it.
+    fn mark_deleted(&mut self, event: &Event) {
+        if let Some(id) = event.tags.identifier() {
+            self.mark_deleted_at(&id, event.created_at);
+        }
+    }
+
+    fn mark_deleted_at(&mut self, id: &str, at: Timestamp) {
+        let latest = self.deletions.entry(id.to_string()).or_insert(at);
+        *latest = (*latest).max(at);
+    }
+
+    /// Whether an owner announcement is covered by one of their deletion
+    /// requests. A newer announcement brings the repo back.
+    fn is_deleted(&self, event: &Event) -> bool {
+        if event.pubkey != self.owner {
+            return false;
+        }
+        self.deleted_events.contains(&event.id)
+            || event.tags.identifier().is_some_and(|id| {
+                self.deletions
+                    .get(&id)
+                    .is_some_and(|at| event.created_at <= *at)
+            })
+    }
+
+    /// Repos the owner deleted and has not announced again.
+    pub fn deleted_ids(&self) -> BTreeSet<String> {
+        self.deletions
+            .keys()
+            .filter(|id| !self.is_repo(id))
+            .cloned()
+            .collect()
     }
 
     pub fn repo_ids(&self) -> BTreeSet<String> {
@@ -145,6 +240,7 @@ impl Store {
 
         Target {
             id: id.to_string(),
+            deleted: owner_ann.is_none() && self.deletions.contains_key(id),
             description: owner_ann
                 .and_then(|e| tag_values(e, "description").next())
                 .map(String::from),

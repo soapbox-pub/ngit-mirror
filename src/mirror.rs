@@ -32,6 +32,9 @@ pub struct Mirror {
 impl Mirror {
     #[tracing::instrument(skip_all, fields(repo = %target.id))]
     pub async fn sync(&self, target: &Target) -> Result<()> {
+        if target.deleted {
+            return self.delete(target).await;
+        }
         let Some(state) = &target.state else {
             debug!("no state event from a maintainer yet");
             return Ok(());
@@ -136,6 +139,25 @@ impl Mirror {
                 self.gh.set_default_branch(name, head).await?;
                 info!("set default branch to {head}");
             }
+        }
+        Ok(())
+    }
+
+    /// Deletes the GitHub repo and the local cache of a repo whose
+    /// announcement the owner deleted.
+    async fn delete(&self, target: &Target) -> Result<()> {
+        let name = &target.id;
+        if self.gh.repo(name).await?.is_some() {
+            if self.dry_run {
+                info!("would delete {}/{name}", self.gh.org);
+            } else {
+                self.gh.delete_repo(name).await?;
+                info!("deleted {}/{name}", self.gh.org);
+            }
+        }
+        let dir = self.data_dir.join(format!("{name}.git"));
+        if !self.dry_run && dir.exists() {
+            tokio::fs::remove_dir_all(&dir).await?;
         }
         Ok(())
     }

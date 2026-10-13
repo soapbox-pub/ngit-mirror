@@ -17,7 +17,7 @@ use tracing::{error, info, warn};
 use crate::config::Config;
 use crate::github::GitHub;
 use crate::mirror::Mirror;
-use crate::store::{ANNOUNCEMENT, STATE, Store, Target};
+use crate::store::{ANNOUNCEMENT, DELETION, STATE, Store, Target};
 
 /// Mirror ngit (NIP-34) repositories to GitHub as soon as their state changes.
 #[derive(Parser)]
@@ -127,9 +127,16 @@ impl App {
         valid
     }
 
+    /// Live repos plus deleted ones, whose GitHub repos may still need removing.
     fn wanted_ids(&self) -> Vec<String> {
-        let ids = self.store.lock().unwrap().repo_ids();
-        ids.into_iter().filter(|id| self.wanted(id)).collect()
+        let (live, deleted) = {
+            let store = self.store.lock().unwrap();
+            (store.repo_ids(), store.deleted_ids())
+        };
+        live.into_iter()
+            .chain(deleted)
+            .filter(|id| self.wanted(id))
+            .collect()
     }
 
     async fn add_relays(&self) {
@@ -163,11 +170,15 @@ impl App {
         }
     }
 
-    /// Pulls every announcement and state we care about. Runs twice so that
-    /// relays and maintainers learned in the first pass are queried too.
+    /// Pulls every announcement, state and deletion request we care about.
+    /// Runs twice so that relays and maintainers learned in the first pass
+    /// are queried too.
     async fn fetch_all(&self) {
-        self.fetch(vec![Filter::new().kind(ANNOUNCEMENT).author(self.owner)])
-            .await;
+        self.fetch(vec![
+            Filter::new().kind(ANNOUNCEMENT).author(self.owner),
+            Filter::new().kind(DELETION).author(self.owner),
+        ])
+        .await;
         for _ in 0..2 {
             self.add_relays().await;
             let (ids, maintainers) = {
@@ -176,6 +187,7 @@ impl App {
             };
             self.fetch(vec![
                 Filter::new().kind(ANNOUNCEMENT).author(self.owner),
+                Filter::new().kind(DELETION).author(self.owner),
                 Filter::new().kind(ANNOUNCEMENT).identifiers(ids.clone()),
                 Filter::new()
                     .kind(STATE)
@@ -238,18 +250,25 @@ impl App {
     async fn handle(self: &Arc<Self>, event: Event) {
         let kind = event.kind;
         let author = event.pubkey;
-        let Some(id) = self.store.lock().unwrap().insert(event) else {
+        let ids = self.store.lock().unwrap().insert(event);
+        if ids.is_empty() {
             return;
-        };
-        if kind == ANNOUNCEMENT {
-            // May have added a repo, maintainers or relays.
+        }
+        if kind == ANNOUNCEMENT || kind == DELETION {
+            // May have added or removed a repo, maintainers or relays.
             if let Err(e) = self.resubscribe().await {
                 warn!("resubscribe failed: {e:#}");
             }
         }
-        if self.store.lock().unwrap().is_repo(&id) && self.wanted(&id) {
-            info!(repo = %id, kind = kind.as_u16(), author = %author.to_hex(), "new event");
-            self.update(&id, false);
+        for id in ids {
+            let known = {
+                let store = self.store.lock().unwrap();
+                store.is_repo(&id) || store.deleted_ids().contains(&id)
+            };
+            if known && self.wanted(&id) {
+                info!(repo = %id, kind = kind.as_u16(), author = %author.to_hex(), "new event");
+                self.update(&id, false);
+            }
         }
     }
 
@@ -271,6 +290,7 @@ impl App {
                 .kind(ANNOUNCEMENT)
                 .author(self.owner)
                 .since(since),
+            Filter::new().kind(DELETION).author(self.owner).since(since),
             Filter::new()
                 .kind(ANNOUNCEMENT)
                 .identifiers(ids.clone())

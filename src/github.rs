@@ -183,6 +183,12 @@ impl GitHub {
         send(self.api(Method::POST, &path).await?.json(&body)).await
     }
 
+    pub async fn delete_repo(&self, name: &str) -> Result<()> {
+        let path = format!("/repos/{}/{name}", self.org);
+        check(self.api(Method::DELETE, &path).await?.send().await?).await?;
+        Ok(())
+    }
+
     pub async fn set_default_branch(&self, name: &str, branch: &str) -> Result<()> {
         let path = format!("/repos/{}/{name}", self.org);
         let body = json!({ "default_branch": branch });

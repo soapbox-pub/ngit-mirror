@@ -19,6 +19,10 @@ local bare cache and force-pushes the branches and tags to
 - **Only `refs/heads/*` and `refs/tags/*` are mirrored.** The GitHub default
   branch follows the state's `HEAD`.
 - **Branches that exist only on GitHub are kept** unless `prune = true`.
+- **Deleting a repo on Nostr deletes it on GitHub.** When the owner publishes
+  a deletion request (kind 5) for an announcement, the GitHub repo and its
+  cache are deleted. Announcing the repo again later brings it back. Add it
+  to `ignore` to keep a GitHub repo that has been deleted on Nostr.
 - **A full reconcile runs hourly** to catch events missed while relays were
   disconnected.
 
