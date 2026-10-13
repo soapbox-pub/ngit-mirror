@@ -273,7 +273,8 @@ impl App {
     }
 
     /// Re-issues the live subscription when the set of repos, maintainers or
-    /// relays has changed. Reusing the id replaces the old REQ on each relay.
+    /// relays has changed. nostr-sdk refuses to reuse a live subscription id,
+    /// so the old REQ is closed first; `since` covers the gap.
     async fn resubscribe(&self) -> Result<()> {
         self.add_relays().await;
         let key = {
@@ -301,10 +302,15 @@ impl App {
                 .identifiers(ids)
                 .since(since),
         ];
-        self.client
-            .subscribe(filters)
-            .with_id(SubscriptionId::new("ngit-mirror"))
-            .await?;
+        let id = SubscriptionId::new("ngit-mirror");
+        self.client.unsubscribe(&id).await?;
+        let output = self.client.subscribe(filters).with_id(id).await?;
+        for (url, e) in &output.failed {
+            warn!(%url, "subscribe failed: {e}");
+        }
+        if output.success.is_empty() {
+            bail!("subscribe failed on every relay");
+        }
         *self.subscribed.lock().unwrap() = Some(key);
         Ok(())
     }
